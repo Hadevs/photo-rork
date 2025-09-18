@@ -98,6 +98,9 @@ const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
 
   const uploadToTmpFiles = async (fileUri: string): Promise<string> => {
     try {
+      if (!fileUri || !fileUri.startsWith('file://')) {
+        throw new Error('uploadToTmpFiles expects a file:// URI');
+      }
       // Determine file type and name based on URI
       let fileName = 'photo.jpg';
       let mimeType = 'image/jpeg';
@@ -146,9 +149,6 @@ const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
       const response = await fetch('https://tmpfiles.org/api/v1/upload', {
         method: 'POST',
         body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
       });
 
       const result = await response.json();
@@ -177,50 +177,82 @@ const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
 
       console.log(`Loading ${selectedStyle} style image from assets...`);
       
-      // Load the appropriate style asset
-      let asset;
-      switch (selectedStyle) {
-        case 'banana':
-          asset = Asset.fromModule(require('../assets/styles/banana.png'));
-          break;
-        case 'joker':
-          asset = Asset.fromModule(require('../assets/styles/joker.png'));
-          break;
-        case 'monkey':
-          asset = Asset.fromModule(require('../assets/styles/monkey.png'));
-          break;
-        case 'office':
-          asset = Asset.fromModule(require('../assets/styles/office.png'));
-          break;
-        case 'pirate':
-          asset = Asset.fromModule(require('../assets/styles/pirate.png'));
-          break;
-        case 'anime':
-          asset = Asset.fromModule(require('../assets/styles/anime.png'));
-          break;
-        case 'alien':
-          asset = Asset.fromModule(require('../assets/styles/alien.png'));
-          break;
-        case 'sherlock':
-          asset = Asset.fromModule(require('../assets/styles/sherlock.png'));
-          break;
-        case 'vampire':
-          asset = Asset.fromModule(require('../assets/styles/vampire.png'));
-          break;
-        default:
-          throw new Error(`Unknown style: ${selectedStyle}`);
+      // Resolve the correct module for the style and ensure a real file:// URI
+      const styleModule = (() => {
+        switch (selectedStyle) {
+          case 'banana':
+            return require('../assets/styles/banana.png');
+          case 'joker':
+            return require('../assets/styles/joker.png');
+          case 'monkey':
+            return require('../assets/styles/monkey.png');
+          case 'office':
+            return require('../assets/styles/office.png');
+          case 'pirate':
+            return require('../assets/styles/pirate.png');
+          case 'anime':
+            return require('../assets/styles/anime.png');
+          case 'alien':
+            return require('../assets/styles/alien.png');
+          case 'sherlock':
+            return require('../assets/styles/sherlock.png');
+          case 'vampire':
+            return require('../assets/styles/vampire.png');
+          default:
+            throw new Error(`Unknown style: ${selectedStyle}`);
+        }
+      })();
+
+      const styleAsset = Asset.fromModule(styleModule);
+      await styleAsset.downloadAsync();
+
+      const resolvedUri = styleAsset.localUri || styleAsset.uri;
+      console.log(`${selectedStyle} asset URI:`, resolvedUri);
+      console.log(`${styleModule} <- WHAT? 1!`);
+      console.log(`${styleAsset.uri} <- WHAT? 2!`);
+      console.log(`${styleAsset.localUri} <- WHAT? 3!`);
+      
+      // If we don't have a proper file:// URI, try to copy the asset to a local file
+      let finalUri = resolvedUri;
+      if (!resolvedUri || !resolvedUri.startsWith('file://')) {
+        console.log('Asset URI is not file://, trying to copy to local file...');
+        const localPath = `${FileSystem.documentDirectory}${selectedStyle}_style.png`;
+        
+        try {
+          // Try to copy using the asset URI (even if it's not file://)
+          await FileSystem.copyAsync({
+            from: resolvedUri,
+            to: localPath
+          });
+          finalUri = localPath;
+          console.log(`Successfully copied asset to: ${finalUri}`);
+        } catch (copyError) {
+          console.error('Failed to copy asset:', copyError);
+          
+          // Last resort: try bundle directory
+          try {
+            const bundlePath = `${FileSystem.bundleDirectory}assets/styles/${selectedStyle}.png`;
+            console.log(`Trying bundle path: ${bundlePath}`);
+            
+            const fileInfo = await FileSystem.getInfoAsync(bundlePath);
+            if (fileInfo.exists) {
+              finalUri = bundlePath;
+              console.log(`Found style in bundle: ${finalUri}`);
+            } else {
+              throw new Error(`Bundle file does not exist: ${bundlePath}`);
+            }
+          } catch (bundleError) {
+            console.error('Bundle approach also failed:', bundleError);
+            throw new Error('Failed to resolve style asset to a local file URI');
+          }
+        }
       }
-      
-      await asset.downloadAsync();
-      
-      console.log(`${selectedStyle} asset URI:`, asset.localUri || asset.uri);
-      const styleImageUri = asset.localUri || asset.uri;
-      
+
       // Upload the style image to tmpfiles
       console.log(`Uploading ${selectedStyle} style to tmpfiles...`);
-      const styleUrl = await uploadToTmpFiles(styleImageUri);
+      const styleUrl = await uploadToTmpFiles(finalUri);
       console.log(`${selectedStyle} style uploaded to:`, styleUrl);
-      
+
       return styleUrl;
     } catch (error) {
       console.error('Error loading style image:', error);
@@ -231,6 +263,9 @@ const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
           const fallbackAsset = Asset.fromModule(require('../assets/styles/banana.png'));
           await fallbackAsset.downloadAsync();
           const fallbackUri = fallbackAsset.localUri || fallbackAsset.uri;
+          if (!fallbackUri || !fallbackUri.startsWith('file://')) {
+            throw new Error('Fallback style is not a local file URI');
+          }
           return await uploadToTmpFiles(fallbackUri);
         } catch (fallbackError) {
           console.error('Fallback style loading failed:', fallbackError);
