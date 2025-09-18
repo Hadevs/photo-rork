@@ -1,5 +1,7 @@
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import * as MediaLibrary from 'expo-media-library';
+import * as FileSystem from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 import { useState, useRef, useEffect } from 'react';
 import { 
   StyleSheet, 
@@ -7,32 +9,50 @@ import {
   View, 
   TouchableOpacity, 
   StatusBar,
-  Alert
+  Alert,
+  Image
 } from 'react-native';
 import { 
   RotateCcw, 
   Zap, 
   ZapOff, 
   Settings,
-  Grid3X3
+  Grid3X3,
+  X,
+  Focus
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import PhotoEditorScreen from './PhotoEditorScreen';
 
 
 
-type CameraMode = 'photo' | 'video' | 'pro' | 'panorama';
+type CameraMode = 'photo' | 'pro' | 'panorama';
 
 export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
   const [permission, requestPermission] = useCameraPermissions();
   const [mediaPermission, requestMediaPermission] = MediaLibrary.usePermissions();
   const [flash, setFlash] = useState<'off' | 'on' | 'auto'>('off');
-  const [zoom, setZoom] = useState(1);
   const [mode, setMode] = useState<CameraMode>('photo');
-  const [isRecording, setIsRecording] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
+  const [showGoldenRatio, setShowGoldenRatio] = useState(false);
   const [showPro, setShowPro] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  
+  // Photo editor state
+  const [showPhotoEditor, setShowPhotoEditor] = useState(false);
+  const [capturedPhotoUri, setCapturedPhotoUri] = useState<string | null>(null);
+  
+  // Gallery state
+  const [recentPhoto, setRecentPhoto] = useState<string | null>(null);
+  
+  // Pro camera settings
+  const [selectedProSetting, setSelectedProSetting] = useState<string>('F');
+  const [exposureValue, setExposureValue] = useState(0.17);
+  const [isoValue, setIsoValue] = useState(320);
+  const [shutterSpeed, setShutterSpeed] = useState('1/120');
+  const [apertureValue, setApertureValue] = useState(0.20);
+  const [whiteBalance, setWhiteBalance] = useState('8600K');
   const cameraRef = useRef<CameraView>(null);
   const insets = useSafeAreaInsets();
 
@@ -41,6 +61,42 @@ export default function CameraScreen() {
       requestMediaPermission();
     }
   }, [mediaPermission, requestMediaPermission]);
+
+  // Load recent photo for gallery preview
+  useEffect(() => {
+    const loadRecentPhoto = async () => {
+      if (mediaPermission?.granted) {
+        try {
+          const assets = await MediaLibrary.getAssetsAsync({
+            first: 1,
+            mediaType: 'photo',
+            sortBy: 'creationTime'
+          });
+          
+          if (assets.assets.length > 0) {
+            const asset = assets.assets[0];
+            console.log('Recent photo asset:', asset);
+            
+            // Get asset info with local URI to avoid ph:// schema issues
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(asset);
+            console.log('Asset info:', assetInfo);
+            
+            if (assetInfo.localUri) {
+              console.log('Recent photo loaded with local URI:', assetInfo.localUri);
+              setRecentPhoto(assetInfo.localUri);
+            } else {
+              console.log('Recent photo loaded with original URI:', asset.uri);
+              setRecentPhoto(asset.uri);
+            }
+          }
+        } catch (error) {
+          console.error('Error loading recent photo:', error);
+        }
+      }
+    };
+
+    loadRecentPhoto();
+  }, [mediaPermission?.granted]);
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -58,7 +114,11 @@ export default function CameraScreen() {
   }
 
   const toggleCameraFacing = () => {
-    setFacing(current => (current === 'back' ? 'front' : 'back'));
+    setFacing(current => {
+      const newFacing = current === 'back' ? 'front' : 'back';
+      console.log('Switching camera from', current, 'to', newFacing);
+      return newFacing;
+    });
   };
 
   const toggleFlash = () => {
@@ -67,6 +127,154 @@ export default function CameraScreen() {
       if (current === 'on') return 'auto';
       return 'off';
     });
+  };
+
+  // Gallery handlers
+  const openGallery = async () => {
+    try {
+      console.log('Opening gallery...');
+      
+      if (!mediaPermission?.granted) {
+        Alert.alert('Permission Required', 'Please grant media library permission to view photos');
+        return;
+      }
+
+      // Request gallery permissions
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission Required', 'Please grant permission to access your photo library');
+        return;
+      }
+
+      // Launch image library
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: 1,
+      });
+
+      console.log('Gallery result:', result);
+
+      if (!result.canceled && result.assets.length > 0) {
+        const selectedPhoto = result.assets[0];
+        console.log('Photo selected from gallery:', selectedPhoto.uri);
+        
+        // Open the selected photo in photo editor
+        setCapturedPhotoUri(selectedPhoto.uri);
+        setShowPhotoEditor(true);
+      }
+    } catch (error) {
+      console.error('Error opening gallery:', error);
+      Alert.alert('Error', 'Failed to open gallery');
+    }
+  };
+
+  // Photo editor handlers
+  const handlePhotoEditorBack = () => {
+    setShowPhotoEditor(false);
+    setCapturedPhotoUri(null);
+  };
+
+  const handlePhotoEditorSave = async (editedPhotoUri?: string) => {
+    try {
+      const photoUriToSave = editedPhotoUri || capturedPhotoUri;
+      
+      console.log('Saving photo to gallery...');
+      console.log('Photo URI to save:', photoUriToSave);
+      console.log('Media permission granted:', mediaPermission?.granted);
+      
+      if (photoUriToSave && mediaPermission?.granted) {
+        // Check if file exists before saving
+        const fileInfo = await FileSystem.getInfoAsync(photoUriToSave);
+        console.log('File info:', fileInfo);
+        
+        if (fileInfo.exists) {
+          const asset = await MediaLibrary.createAssetAsync(photoUriToSave);
+          console.log('Photo saved to gallery successfully:', asset);
+          
+          // Update gallery preview with the newly saved photo using local URI
+          try {
+            const assetInfo = await MediaLibrary.getAssetInfoAsync(asset);
+            const previewUri = assetInfo.localUri || asset.uri;
+            console.log('Updating gallery preview with:', previewUri);
+            setRecentPhoto(previewUri);
+          } catch (error) {
+            console.error('Error getting asset info for preview:', error);
+            // Fallback to original URI if getting asset info fails
+            setRecentPhoto(asset.uri);
+          }
+          
+          Alert.alert('Success', 'Photo saved to gallery!');
+        } else {
+          console.error('File does not exist at URI:', photoUriToSave);
+          Alert.alert('Error', 'Generated image file not found');
+        }
+      } else if (!mediaPermission?.granted) {
+        Alert.alert('Permission Required', 'Please grant media library permission to save photos');
+      } else {
+        console.error('No photo URI provided');
+        Alert.alert('Error', 'No photo to save');
+      }
+      
+      // Close editor and reset state
+      setShowPhotoEditor(false);
+      setCapturedPhotoUri(null);
+    } catch (error) {
+      console.error('Error saving photo:', error);
+      Alert.alert('Error', 'Failed to save photo to gallery');
+    }
+  };
+
+  // Pro setting handlers
+  const handleProSettingTap = (setting: string) => {
+    setSelectedProSetting(setting);
+    console.log('Selected pro setting:', setting);
+  };
+
+  const cycleProValue = (setting: string) => {
+    switch (setting) {
+      case 'EV':
+        setExposureValue(prev => {
+          const values = [-2, -1, 0, 0.17, 1, 2];
+          const currentIndex = values.findIndex(val => Math.abs(val - prev) < 0.1);
+          const nextIndex = (currentIndex + 1) % values.length;
+          return values[nextIndex];
+        });
+        break;
+      case 'ISO':
+        setIsoValue(prev => {
+          const values = [50, 100, 200, 320, 400, 800, 1600];
+          const currentIndex = values.indexOf(prev);
+          const nextIndex = (currentIndex + 1) % values.length;
+          return values[nextIndex];
+        });
+        break;
+      case 'S':
+        setShutterSpeed(prev => {
+          const values = ['1/30', '1/60', '1/120', '1/240', '1/500'];
+          const currentIndex = values.indexOf(prev);
+          const nextIndex = (currentIndex + 1) % values.length;
+          return values[nextIndex];
+        });
+        break;
+      case 'F':
+        setApertureValue(prev => {
+          const values = [0.20, 0.95, 1.4, 2.0, 2.8, 4.0];
+          const currentIndex = values.findIndex(val => Math.abs(val - prev) < 0.1);
+          const nextIndex = (currentIndex + 1) % values.length;
+          return values[nextIndex];
+        });
+        break;
+      case 'WB':
+        setWhiteBalance(prev => {
+          const values = ['2700K', '3200K', '5600K', '8600K', 'Auto'];
+          const currentIndex = values.indexOf(prev);
+          const nextIndex = (currentIndex + 1) % values.length;
+          return values[nextIndex];
+        });
+        break;
+    }
   };
 
   const takePicture = async () => {
@@ -78,36 +286,7 @@ export default function CameraScreen() {
     try {
       setIsCapturing(true);
       
-      if (mode === 'video') {
-        if (isRecording) {
-          console.log('Stopping video recording...');
-          cameraRef.current.stopRecording();
-          setIsRecording(false);
-        } else {
-          console.log('Starting video recording...');
-          setIsRecording(true);
-          
-          const video = await cameraRef.current.recordAsync({
-            maxDuration: 60
-          });
-          
-          console.log('Video recorded:', video);
-          
-          if (video && video.uri && mediaPermission?.granted) {
-            try {
-              const asset = await MediaLibrary.createAssetAsync(video.uri);
-              console.log('Video saved to gallery:', asset);
-              Alert.alert('Success', 'Video saved to gallery!');
-            } catch (saveError) {
-              console.error('Error saving video to gallery:', saveError);
-              Alert.alert('Error', 'Failed to save video to gallery');
-            }
-          }
-          
-          setIsRecording(false);
-        }
-      } else {
-        console.log('Taking photo...');
+      console.log('Taking photo...');
         
         const photo = await cameraRef.current.takePictureAsync({
           quality: 1,
@@ -117,41 +296,21 @@ export default function CameraScreen() {
         
         console.log('Photo taken:', photo);
         
-        if (photo && photo.uri && mediaPermission?.granted) {
-          try {
-            const asset = await MediaLibrary.createAssetAsync(photo.uri);
-            console.log('Photo saved to gallery:', asset);
-            Alert.alert('Success', 'Photo saved to gallery!');
-          } catch (saveError) {
-            console.error('Error saving photo to gallery:', saveError);
-            Alert.alert('Error', 'Failed to save photo to gallery');
-          }
-        } else if (!mediaPermission?.granted) {
-          Alert.alert('Permission Required', 'Please grant media library permission to save photos and videos');
+        if (photo && photo.uri) {
+          // Open photo editor instead of immediately saving
+          setCapturedPhotoUri(photo.uri);
+          setShowPhotoEditor(true);
+        } else {
+          Alert.alert('Error', 'Failed to capture photo');
         }
-      }
     } catch (error) {
       console.error('Error in takePicture:', error);
       Alert.alert('Error', 'Failed to capture media. Please try again.');
-      setIsRecording(false);
     } finally {
       setIsCapturing(false);
     }
   };
 
-  const zoomLevels = [1, 2, 3, 5, 10];
-  const currentZoomIndex = zoomLevels.findIndex(level => level === zoom);
-
-  const handleZoomTap = () => {
-    try {
-      const nextIndex = (currentZoomIndex + 1) % zoomLevels.length;
-      const newZoom = zoomLevels[nextIndex];
-      console.log('Changing zoom to:', newZoom);
-      setZoom(newZoom);
-    } catch (error) {
-      console.error('Error changing zoom:', error);
-    }
-  };
 
   const renderTopControls = () => (
     <View style={[styles.topControls, { paddingTop: insets.top + 10 }]}>
@@ -177,21 +336,39 @@ export default function CameraScreen() {
       <View style={styles.topRight}>
         <TouchableOpacity 
           style={[styles.controlButton, showGrid && styles.controlButtonActive]}
-          onPress={() => setShowGrid(!showGrid)}
+          onPress={() => {
+            const newShowGrid = !showGrid;
+            console.log('Toggling regular grid:', showGrid, '->', newShowGrid);
+            setShowGrid(newShowGrid);
+            if (newShowGrid) setShowGoldenRatio(false); // Turn off golden ratio when enabling regular grid
+          }}
         >
           <Grid3X3 color="white" size={20} />
         </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.controlButton, showGoldenRatio && styles.controlButtonActive]}
+          onPress={() => {
+            const newShowGoldenRatio = !showGoldenRatio;
+            console.log('Toggling golden ratio grid:', showGoldenRatio, '->', newShowGoldenRatio);
+            setShowGoldenRatio(newShowGoldenRatio);
+            if (newShowGoldenRatio) setShowGrid(false); // Turn off regular grid when enabling golden ratio
+          }}
+        >
+          <Focus color="white" size={20} />
+        </TouchableOpacity>
         
         <TouchableOpacity 
-          style={styles.controlButton}
-          onPress={() => setShowPro(!showPro)}
+          style={[styles.controlButton, showPro && styles.controlButtonActive]}
+          onPress={() => {
+            const newShowPro = !showPro;
+            console.log('Toggling pro controls:', newShowPro ? 'opening' : 'closing');
+            setShowPro(newShowPro);
+          }}
         >
-          <Settings color="white" size={20} />
+          {showPro ? <X color="white" size={20} /> : <Settings color="white" size={20} />}
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.zoomButton} onPress={handleZoomTap}>
-          <Text style={styles.zoomText}>{zoom}X</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -199,39 +376,49 @@ export default function CameraScreen() {
   const renderProControls = () => {
     if (!showPro) return null;
     
+    const proSettings = [
+      { key: 'EV', label: 'EV', value: exposureValue.toString() },
+      { key: 'ISO', label: 'ISO', value: isoValue.toString() },
+      { key: 'S', label: 'S', value: shutterSpeed },
+      { key: 'F', label: 'F', value: apertureValue.toFixed(2) },
+      { key: 'WB', label: 'WB', value: whiteBalance }
+    ];
+    
     return (
       <View style={styles.proControls}>
-        <View style={styles.proControl}>
-          <Text style={styles.proLabel}>EV</Text>
-          <Text style={styles.proValue}>0.17</Text>
-        </View>
-        <View style={styles.proControl}>
-          <Text style={styles.proLabel}>ISO</Text>
-          <Text style={styles.proValue}>320</Text>
-        </View>
-        <View style={styles.proControl}>
-          <Text style={styles.proLabel}>S</Text>
-          <Text style={styles.proValue}>1/120</Text>
-        </View>
-        <View style={[styles.proControl, styles.proControlActive]}>
-          <Text style={styles.proLabel}>F</Text>
-          <Text style={styles.proValue}>0.20</Text>
-        </View>
-        <View style={styles.proControl}>
-          <Text style={styles.proLabel}>WB</Text>
-          <Text style={styles.proValue}>8600K</Text>
-        </View>
+        {proSettings.map((setting) => (
+          <TouchableOpacity
+            key={setting.key}
+            style={[
+              styles.proControl,
+              selectedProSetting === setting.key && styles.proControlActive
+            ]}
+            onPress={() => {
+              handleProSettingTap(setting.key);
+              cycleProValue(setting.key);
+            }}
+          >
+            <Text style={styles.proLabel}>{setting.label}</Text>
+            <Text style={styles.proValue}>{setting.value}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
     );
   };
 
   const renderModeSelector = () => (
     <View style={styles.modeSelector}>
-      {(['photo', 'video', 'pro', 'panorama'] as CameraMode[]).map((modeOption) => (
+      {(['photo', 'pro', 'panorama'] as CameraMode[]).map((modeOption) => (
         <TouchableOpacity
           key={modeOption}
           style={[styles.modeButton, mode === modeOption && styles.modeButtonActive]}
-          onPress={() => setMode(modeOption)}
+          onPress={() => {
+            setMode(modeOption);
+            // Auto-open pro controls when selecting pro mode
+            if (modeOption === 'pro') {
+              setShowPro(true);
+            }
+          }}
         >
           <Text style={[styles.modeText, mode === modeOption && styles.modeTextActive]}>
             {modeOption.charAt(0).toUpperCase() + modeOption.slice(1)}
@@ -246,16 +433,27 @@ export default function CameraScreen() {
       {renderModeSelector()}
       
       <View style={styles.captureControls}>
-        <TouchableOpacity style={styles.galleryButton}>
-          <View style={styles.galleryPreview} />
+        <TouchableOpacity style={styles.galleryButton} onPress={openGallery}>
+          <View style={styles.galleryPreview}>
+            {recentPhoto && !recentPhoto.startsWith('ph://') && (
+              <Image 
+                source={{ uri: recentPhoto }} 
+                style={styles.galleryPreviewImage}
+                resizeMode="cover"
+                onError={(error) => {
+                  console.warn('Gallery preview image load error:', error);
+                }}
+              />
+            )}
+          </View>
         </TouchableOpacity>
 
         <TouchableOpacity 
-          style={[styles.captureButton, isRecording && styles.captureButtonRecording, isCapturing && styles.captureButtonDisabled]}
+          style={[styles.captureButton, isCapturing && styles.captureButtonDisabled]}
           onPress={takePicture}
           disabled={isCapturing}
         >
-          <View style={[styles.captureButtonInner, isRecording && styles.captureButtonInnerRecording]} />
+          <View style={styles.captureButtonInner} />
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.flipButton} onPress={toggleCameraFacing}>
@@ -278,6 +476,41 @@ export default function CameraScreen() {
     );
   };
 
+  const renderGoldenRatioGrid = () => {
+    if (!showGoldenRatio) return null;
+    
+    // Golden ratio ≈ 1.618
+    // For golden ratio grid, we use 61.8% and 38.2% divisions
+    return (
+      <View style={styles.gridOverlay}>
+        {/* Vertical golden ratio lines */}
+        <View style={[styles.gridLine, styles.gridLineVertical, styles.goldenRatioLine, { left: '38.2%' }]} />
+        <View style={[styles.gridLine, styles.gridLineVertical, styles.goldenRatioLine, { left: '61.8%' }]} />
+        
+        {/* Horizontal golden ratio lines */}
+        <View style={[styles.gridLine, styles.gridLineHorizontal, styles.goldenRatioLine, { top: '38.2%' }]} />
+        <View style={[styles.gridLine, styles.gridLineHorizontal, styles.goldenRatioLine, { top: '61.8%' }]} />
+        
+        {/* Golden ratio spirals (corners) */}
+        <View style={[styles.goldenSpiral, styles.goldenSpiralTopLeft]} />
+        <View style={[styles.goldenSpiral, styles.goldenSpiralTopRight]} />
+        <View style={[styles.goldenSpiral, styles.goldenSpiralBottomLeft]} />
+        <View style={[styles.goldenSpiral, styles.goldenSpiralBottomRight]} />
+      </View>
+    );
+  };
+
+  // Render photo editor if active
+  if (showPhotoEditor && capturedPhotoUri) {
+    return (
+      <PhotoEditorScreen
+        photoUri={capturedPhotoUri}
+        onBack={handlePhotoEditorBack}
+        onSave={handlePhotoEditorSave}
+      />
+    );
+  }
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
@@ -287,10 +520,10 @@ export default function CameraScreen() {
         style={styles.camera}
         facing={facing}
         flash={flash}
-        zoom={Math.max(1, Math.min(zoom, 10))}
-        mode={mode === 'video' ? 'video' : 'picture'}
+        mode="picture"
       >
         {renderGrid()}
+        {renderGoldenRatioGrid()}
         {renderTopControls()}
         {renderProControls()}
         {renderBottomControls()}
@@ -338,7 +571,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    zIndex: 1,
+    zIndex: 10,
   },
   topLeft: {
     flexDirection: 'row',
@@ -372,25 +605,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
-  zoomButton: {
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
-  },
-  zoomText: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '600',
-  },
   proControls: {
     position: 'absolute',
-    bottom: 180,
+    bottom: 280,
     left: 20,
     right: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    zIndex: 1,
+    zIndex: 10,
   },
   proControl: {
     backgroundColor: 'rgba(0, 0, 0, 0.6)',
@@ -421,7 +643,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    zIndex: 1,
+    zIndex: 10,
   },
   modeSelector: {
     flexDirection: 'row',
@@ -462,6 +684,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: 'rgba(255, 255, 255, 0.3)',
     borderRadius: 8,
+    overflow: 'hidden',
+  },
+  galleryPreviewImage: {
+    width: '100%',
+    height: '100%',
   },
   captureButton: {
     width: 80,
@@ -504,6 +731,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     zIndex: 0,
+    pointerEvents: 'none',
   },
   gridLine: {
     position: 'absolute',
@@ -516,5 +744,43 @@ const styles = StyleSheet.create({
   gridLineHorizontal: {
     height: 1,
     width: '100%',
+  },
+  goldenRatioLine: {
+    backgroundColor: 'rgba(255, 215, 0, 0.4)', // Golden color with transparency
+  },
+  goldenSpiral: {
+    position: 'absolute',
+    width: 30,
+    height: 30,
+    borderColor: 'rgba(255, 215, 0, 0.6)',
+    borderWidth: 2,
+  },
+  goldenSpiralTopLeft: {
+    top: '38.2%',
+    left: '38.2%',
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 30,
+  },
+  goldenSpiralTopRight: {
+    top: '38.2%',
+    right: '38.2%',
+    borderLeftWidth: 0,
+    borderBottomWidth: 0,
+    borderTopRightRadius: 30,
+  },
+  goldenSpiralBottomLeft: {
+    bottom: '38.2%',
+    left: '38.2%',
+    borderRightWidth: 0,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 30,
+  },
+  goldenSpiralBottomRight: {
+    bottom: '38.2%',
+    right: '38.2%',
+    borderLeftWidth: 0,
+    borderTopWidth: 0,
+    borderBottomRightRadius: 30,
   },
 });
