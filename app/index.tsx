@@ -11,7 +11,8 @@ import {
   StatusBar,
   Alert,
   Image,
-  ActivityIndicator
+  ActivityIndicator,
+  ScrollView
 } from 'react-native';
 import { 
   RotateCcw, 
@@ -32,7 +33,7 @@ import WebViewScreen from '../components/WebViewScreen';
 
 
 
-type CameraMode = 'photo' | 'pro' | 'timer' | 'panorama';
+type CameraMode = 'photo' | 'pro' | 'timer' | 'burst';
 
 export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
@@ -50,6 +51,12 @@ export default function CameraScreen() {
   const [timerCountdown, setTimerCountdown] = useState(0);
   const [isTimerActive, setIsTimerActive] = useState(false);
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  
+  // Burst state
+  const [burstCount, setBurstCount] = useState(3); // number of photos
+  const [isBurstActive, setIsBurstActive] = useState(false);
+  const [burstPhotos, setBurstPhotos] = useState<string[]>([]);
+  const [showPhotoSelection, setShowPhotoSelection] = useState(false);
   
   // Photo editor state
   const [showPhotoEditor, setShowPhotoEditor] = useState(false);
@@ -232,9 +239,67 @@ export default function CameraScreen() {
           return prev - 1;
         });
       }, 1000);
-    } else if (mode !== 'timer') {
-      // Not in timer mode, take photo immediately
+    } else if (mode === 'burst' && !isBurstActive) {
+      // Burst mode - take multiple photos
+      startBurstCapture();
+    } else if (mode !== 'timer' && mode !== 'burst') {
+      // Not in timer or burst mode, take photo immediately
       takePicture();
+    }
+  };
+
+  // Burst functions
+  const startBurstCapture = async () => {
+    if (!cameraRef.current || isBurstActive) {
+      console.log('Camera not ready or burst already active');
+      return;
+    }
+
+    try {
+      setIsBurstActive(true);
+      setBurstPhotos([]);
+      
+      console.log(`Starting burst capture of ${burstCount} photos...`);
+      
+      const photos: string[] = [];
+      
+      for (let i = 0; i < burstCount; i++) {
+        if (!cameraRef.current) break;
+        
+        try {
+          const photo = await cameraRef.current.takePictureAsync({
+            quality: 1,
+            base64: false,
+            exif: true
+          });
+          
+          if (photo && photo.uri) {
+            photos.push(photo.uri);
+            setBurstPhotos([...photos]);
+            console.log(`Burst photo ${i + 1}/${burstCount} taken:`, photo.uri);
+          }
+          
+          // Small delay between photos for better burst effect
+          if (i < burstCount - 1) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
+        } catch (error) {
+          console.error(`Error taking burst photo ${i + 1}:`, error);
+        }
+      }
+      
+      console.log(`Burst capture completed. ${photos.length} photos taken.`);
+      
+      if (photos.length > 0) {
+        setShowPhotoSelection(true);
+      } else {
+        Alert.alert('Error', 'Failed to capture burst photos');
+      }
+    } catch (error) {
+      console.error('Error in burst capture:', error);
+      Alert.alert('Error', 'Failed to capture burst photos');
+    } finally {
+      setIsBurstActive(false);
     }
   };
 
@@ -555,9 +620,40 @@ export default function CameraScreen() {
     );
   };
 
+  const renderBurstControls = () => {
+    if (mode !== 'burst') return null;
+    
+    const burstCounts = [3, 5, 10, 15];
+    
+    return (
+      <View style={styles.burstControls}>
+        <Text style={styles.burstControlsTitle}>Burst Count</Text>
+        <View style={styles.burstCounts}>
+          {burstCounts.map((count) => (
+            <TouchableOpacity
+              key={count}
+              style={[
+                styles.burstCountButton,
+                burstCount === count && styles.burstCountButtonActive
+              ]}
+              onPress={() => setBurstCount(count)}
+            >
+              <Text style={[
+                styles.burstCountText,
+                burstCount === count && styles.burstCountTextActive
+              ]}>
+                {count}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
   const renderModeSelector = () => (
     <View style={styles.modeSelector}>
-      {(['photo', 'pro', 'timer', 'panorama'] as CameraMode[]).map((modeOption) => (
+      {(['photo', 'pro', 'timer', 'burst'] as CameraMode[]).map((modeOption) => (
         <TouchableOpacity
           key={modeOption}
           style={[styles.modeButton, mode === modeOption && styles.modeButtonActive]}
@@ -598,9 +694,9 @@ export default function CameraScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity 
-          style={[styles.captureButton, (isCapturing || isTimerActive) && styles.captureButtonDisabled]}
+          style={[styles.captureButton, (isCapturing || isTimerActive || isBurstActive) && styles.captureButtonDisabled]}
           onPress={startTimer}
-          disabled={isCapturing || isTimerActive}
+          disabled={isCapturing || isTimerActive || isBurstActive}
         >
           <View style={styles.captureButtonInner} />
         </TouchableOpacity>
@@ -664,6 +760,57 @@ export default function CameraScreen() {
     );
   };
 
+  const renderPhotoSelection = () => {
+    if (!showPhotoSelection || burstPhotos.length === 0) return null;
+    
+    return (
+      <View style={styles.photoSelectionOverlay}>
+        <View style={styles.photoSelectionContainer}>
+          <Text style={styles.photoSelectionTitle}>Select Photo</Text>
+          <Text style={styles.photoSelectionSubtitle}>
+            Choose from {burstPhotos.length} burst photos
+          </Text>
+          
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.photoSelectionScroll}
+          >
+            {burstPhotos.map((photoUri, index) => (
+              <TouchableOpacity
+                key={`${photoUri}-${index}`}
+                style={styles.photoSelectionItem}
+                onPress={() => {
+                  setCapturedPhotoUri(photoUri);
+                  setShowPhotoSelection(false);
+                  setBurstPhotos([]);
+                  setShowPhotoEditor(true);
+                }}
+              >
+                <Image 
+                  source={{ uri: photoUri }} 
+                  style={styles.photoSelectionImage}
+                  resizeMode="cover"
+                />
+                <Text style={styles.photoSelectionNumber}>{index + 1}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          
+          <TouchableOpacity 
+            style={styles.cancelSelectionButton} 
+            onPress={() => {
+              setShowPhotoSelection(false);
+              setBurstPhotos([]);
+            }}
+          >
+            <Text style={styles.cancelSelectionText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   // Show loading screen while AppsFlyer is initializing
   if (isLoadingAppsFlyer) {
     return (
@@ -706,8 +853,10 @@ export default function CameraScreen() {
         {renderTopControls()}
         {renderProControls()}
         {renderTimerControls()}
+        {renderBurstControls()}
         {renderBottomControls()}
         {renderTimerOverlay()}
+        {renderPhotoSelection()}
       </CameraView>
     </View>
   );
@@ -1060,6 +1209,121 @@ const styles = StyleSheet.create({
   },
   timerDurationTextActive: {
     color: '#FFD700',
+    fontWeight: '600',
+  },
+  burstControls: {
+    position: 'absolute',
+    bottom: 280,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 12,
+    padding: 16,
+    zIndex: 10,
+  },
+  burstControlsTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  burstCounts: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  burstCountButton: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    alignItems: 'center',
+  },
+  burstCountButtonActive: {
+    backgroundColor: 'rgba(255, 215, 0, 0.3)',
+    borderColor: '#FFD700',
+  },
+  burstCountText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  burstCountTextActive: {
+    color: '#FFD700',
+    fontWeight: '600',
+  },
+  photoSelectionOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 30,
+  },
+  photoSelectionContainer: {
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    borderRadius: 20,
+    padding: 20,
+    margin: 20,
+    maxWidth: '90%',
+    maxHeight: '80%',
+  },
+  photoSelectionTitle: {
+    color: 'white',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  photoSelectionSubtitle: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  photoSelectionScroll: {
+    paddingHorizontal: 10,
+    gap: 15,
+  },
+  photoSelectionItem: {
+    alignItems: 'center',
+    width: 120,
+  },
+  photoSelectionImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  photoSelectionNumber: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '600',
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  cancelSelectionButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    marginTop: 20,
+    alignSelf: 'center',
+  },
+  cancelSelectionText: {
+    color: 'white',
+    fontSize: 16,
     fontWeight: '600',
   },
 });
