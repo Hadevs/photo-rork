@@ -20,7 +20,9 @@ import {
   Settings,
   Grid3X3,
   X,
-  Focus
+  Focus,
+  Timer,
+  Clock
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PhotoEditorScreen from './PhotoEditorScreen';
@@ -30,7 +32,7 @@ import WebViewScreen from '../components/WebViewScreen';
 
 
 
-type CameraMode = 'photo' | 'pro' | 'panorama';
+type CameraMode = 'photo' | 'pro' | 'timer' | 'panorama';
 
 export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
@@ -42,6 +44,12 @@ export default function CameraScreen() {
   const [showGoldenRatio, setShowGoldenRatio] = useState(false);
   const [showPro, setShowPro] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  
+  // Timer state
+  const [timerDuration, setTimerDuration] = useState(3); // seconds
+  const [timerCountdown, setTimerCountdown] = useState(0);
+  const [isTimerActive, setIsTimerActive] = useState(false);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
   // Photo editor state
   const [showPhotoEditor, setShowPhotoEditor] = useState(false);
@@ -70,6 +78,15 @@ export default function CameraScreen() {
       requestMediaPermission();
     }
   }, [mediaPermission, requestMediaPermission]);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    };
+  }, []);
 
   // AppsFlyer and Facebook SDK initialization
   useEffect(() => {
@@ -191,6 +208,43 @@ export default function CameraScreen() {
       if (current === 'on') return 'auto';
       return 'off';
     });
+  };
+
+  // Timer functions
+
+  const startTimer = () => {
+    if (mode === 'timer' && !isTimerActive) {
+      setIsTimerActive(true);
+      setTimerCountdown(timerDuration);
+      
+      timerIntervalRef.current = setInterval(() => {
+        setTimerCountdown(prev => {
+          if (prev <= 1) {
+            // Timer finished, take photo
+            if (timerIntervalRef.current) {
+              clearInterval(timerIntervalRef.current);
+              timerIntervalRef.current = null;
+            }
+            setIsTimerActive(false);
+            takePicture();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } else if (mode !== 'timer') {
+      // Not in timer mode, take photo immediately
+      takePicture();
+    }
+  };
+
+  const cancelTimer = () => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = null;
+    }
+    setIsTimerActive(false);
+    setTimerCountdown(0);
   };
 
   // Gallery handlers
@@ -470,9 +524,40 @@ export default function CameraScreen() {
     );
   };
 
+  const renderTimerControls = () => {
+    if (mode !== 'timer') return null;
+    
+    const timerDurations = [3, 5, 10, 15];
+    
+    return (
+      <View style={styles.timerControls}>
+        <Text style={styles.timerControlsTitle}>Timer Duration</Text>
+        <View style={styles.timerDurations}>
+          {timerDurations.map((duration) => (
+            <TouchableOpacity
+              key={duration}
+              style={[
+                styles.timerDurationButton,
+                timerDuration === duration && styles.timerDurationButtonActive
+              ]}
+              onPress={() => setTimerDuration(duration)}
+            >
+              <Text style={[
+                styles.timerDurationText,
+                timerDuration === duration && styles.timerDurationTextActive
+              ]}>
+                {duration}s
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
   const renderModeSelector = () => (
     <View style={styles.modeSelector}>
-      {(['photo', 'pro', 'panorama'] as CameraMode[]).map((modeOption) => (
+      {(['photo', 'pro', 'timer', 'panorama'] as CameraMode[]).map((modeOption) => (
         <TouchableOpacity
           key={modeOption}
           style={[styles.modeButton, mode === modeOption && styles.modeButtonActive]}
@@ -513,9 +598,9 @@ export default function CameraScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity 
-          style={[styles.captureButton, isCapturing && styles.captureButtonDisabled]}
-          onPress={takePicture}
-          disabled={isCapturing}
+          style={[styles.captureButton, (isCapturing || isTimerActive) && styles.captureButtonDisabled]}
+          onPress={startTimer}
+          disabled={isCapturing || isTimerActive}
         >
           <View style={styles.captureButtonInner} />
         </TouchableOpacity>
@@ -564,6 +649,21 @@ export default function CameraScreen() {
     );
   };
 
+  const renderTimerOverlay = () => {
+    if (!isTimerActive || timerCountdown <= 0) return null;
+    
+    return (
+      <View style={styles.timerOverlay}>
+        <View style={styles.timerContainer}>
+          <Text style={styles.timerText}>{timerCountdown}</Text>
+          <TouchableOpacity style={styles.cancelTimerButton} onPress={cancelTimer}>
+            <Text style={styles.cancelTimerText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   // Show loading screen while AppsFlyer is initializing
   if (isLoadingAppsFlyer) {
     return (
@@ -605,7 +705,9 @@ export default function CameraScreen() {
         {renderGoldenRatioGrid()}
         {renderTopControls()}
         {renderProControls()}
+        {renderTimerControls()}
         {renderBottomControls()}
+        {renderTimerOverlay()}
       </CameraView>
     </View>
   );
@@ -872,5 +974,92 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     marginTop: 20,
+  },
+  timerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  timerContainer: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    paddingHorizontal: 40,
+    paddingVertical: 30,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#FFD700',
+  },
+  timerText: {
+    color: '#FFD700',
+    fontSize: 72,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.8)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+    marginBottom: 20,
+  },
+  cancelTimerButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  cancelTimerText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  timerControls: {
+    position: 'absolute',
+    bottom: 280,
+    left: 20,
+    right: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 12,
+    padding: 16,
+    zIndex: 10,
+  },
+  timerControlsTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  timerDurations: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  timerDurationButton: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    alignItems: 'center',
+  },
+  timerDurationButtonActive: {
+    backgroundColor: 'rgba(255, 215, 0, 0.3)',
+    borderColor: '#FFD700',
+  },
+  timerDurationText: {
+    color: 'white',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  timerDurationTextActive: {
+    color: '#FFD700',
+    fontWeight: '600',
   },
 });
