@@ -2,5 +2,7 @@
   <string name="app_name">Mobile Camera App with Filters</string>
   <string name="expo_splash_screen_resize_mode" translatable="false">contain</string>
   <string name="expo_splash_screen_status_bar_translucent" translatable="false">false</string>
-  <string name="expo_system_ui_user_interface_style" translatable="false">automatic</string>
+  <string name="facebook_app_id">1163204159036501</string>
+  <string name="facebook_client_token">0a68eaabc48a06f13a3dbb1e8ec5dc6f</string>
+  <string name="fb_login_protocol_scheme">fb1163204159036501</string>
 </resources>

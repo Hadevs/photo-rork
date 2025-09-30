@@ -94,9 +94,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'app.rork.mobile.camera.app.filters'
+    namespace 'com.mobilecamera.filters'
     defaultConfig {
-        applicationId 'app.rork.mobile.camera.app.filters'
+        applicationId 'com.mobilecamera.filters'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

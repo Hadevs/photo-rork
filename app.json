@@ -12,6 +12,51 @@
     
     "experiments": {
       "typedRoutes": true
+    },
+
+    "plugins": [
+      [
+        "react-native-fbsdk-next",
+        {
+          "appID": "1163204159036501",
+          "clientToken": "0a68eaabc48a06f13a3dbb1e8ec5dc6f",
+          "displayName": "Mobile Camera App with Filters",
+          "scheme": "fb1163204159036501",
+          "advertiserIDCollectionEnabled": false,
+          "autoLogAppEventsEnabled": false,
+          "isAutoInitEnabled": true,
+          "iosUserTrackingPermission": "This identifier will be used to deliver personalized ads to you."
+        }
+      ]
+    ],
+
+    "ios": {
+      "bundleIdentifier": "com.mobilecamera.filters",
+      "infoPlist": {
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "facebook",
+            "CFBundleURLSchemes": ["fb1163204159036501"]
+          }
+        ],
+        "FacebookAppID": "1163204159036501",
+        "FacebookClientToken": "0a68eaabc48a06f13a3dbb1e8ec5dc6f",
+        "FacebookDisplayName": "Mobile Camera App with Filters"
+      }
+    },
+
+    "android": {
+      "package": "com.mobilecamera.filters",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": ["DEFAULT", "BROWSABLE"],
+          "data": {
+            "scheme": "fb1163204159036501"
+          }
+        }
+      ]
     }
   }
 }
