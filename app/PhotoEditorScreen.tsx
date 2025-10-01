@@ -393,6 +393,48 @@ const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
     }
   };
 
+  const handleReportAndDelete = () => {
+    Alert.alert(
+      'Report & Delete',
+      'Are you sure you want to delete this photo? This action cannot be undone.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Delete the edited photo if it exists
+              if (editedPhotoUri) {
+                const fileInfo = await FileSystem.getInfoAsync(editedPhotoUri);
+                if (fileInfo.exists) {
+                  await FileSystem.deleteAsync(editedPhotoUri);
+                  console.log('Deleted edited photo:', editedPhotoUri);
+                }
+              }
+              
+              // Delete the original photo
+              const fileInfo = await FileSystem.getInfoAsync(photoUri);
+              if (fileInfo.exists) {
+                await FileSystem.deleteAsync(photoUri);
+                console.log('Deleted original photo:', photoUri);
+              }
+              
+              // Return to camera screen
+              onBack();
+            } catch (error) {
+              console.error('Error deleting photos:', error);
+              Alert.alert('Error', 'Failed to delete photos');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const getButtonText = () => {
     if (isGenerating) return 'Generating...';
     if (selectedStyle === 'original') return 'Save Photo';
@@ -423,7 +465,9 @@ const PhotoEditorScreen: React.FC<PhotoEditorScreenProps> = ({
           <ArrowLeft color="white" size={24} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>AI Photo Editor</Text>
-        <View style={styles.headerSpacer} />
+        <TouchableOpacity style={styles.reportDeleteButton} onPress={handleReportAndDelete}>
+          <Text style={styles.reportDeleteText}>Report & Delete</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Bottom controls overlay */}
@@ -527,6 +571,19 @@ const styles = StyleSheet.create({
   },
   headerSpacer: {
     width: 40,
+  },
+  reportDeleteButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 15,
+    backgroundColor: 'rgba(255, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reportDeleteText: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: '600',
   },
   bottomOverlay: {
     position: 'absolute',
